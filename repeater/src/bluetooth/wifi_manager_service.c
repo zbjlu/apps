@@ -1353,7 +1353,13 @@ void wifimgr_ctrl_iface_notify_scan_res(char *ssid, char *bssid, unsigned char b
 		bssid_len = 0;
 	}
 
-	BTD("band:%d, channel:%d, signal:%d\n", band, channel, signal);
+	if ((security>=1) && (security<=3)) {
+		BTD("security:%u\n", security);
+	} else {
+		BTE("%s ,security err = %d\n", __func__, security);
+	}
+
+	BTD("band:%d, channel:%d, signal:%d, security:%d\n", band, channel, signal, security);
 
 	if ((ssid_len > MAX_SSID_LEN)
 		|| (bssid_len > BSSID_LEN)) {
@@ -1372,7 +1378,9 @@ void wifimgr_ctrl_iface_notify_scan_res(char *ssid, char *bssid, unsigned char b
 	scan_res.band = band;
 	scan_res.channel = channel;
 	scan_res.signal = signal;
-	data_len = 4 + ssid_len + bssid_len;
+	scan_res.security = security;
+	data_len = 4 + 1 + ssid_len + bssid_len;
+	BTD("data_len:%u, ssid_len:%u, bssid_len:%u\n", data_len, ssid_len, bssid_len);
 	res_result = RESULT_SUCCESS;
 
 	p = data;
@@ -1389,6 +1397,8 @@ void wifimgr_ctrl_iface_notify_scan_res(char *ssid, char *bssid, unsigned char b
 	for (i = 0; i < bssid_len; i++) {
 		UINT8_TO_STREAM(p, scan_res.bssid[i]);
 	}
+
+	UINT8_TO_STREAM(p, scan_res.security);
 
 	wifi_manager_notify(data, data_len + 4);
 }

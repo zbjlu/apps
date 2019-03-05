@@ -52,6 +52,7 @@ typedef struct {
 	unsigned char band;
 	unsigned char channel;
 	signed char signal;
+	unsigned char security;
 }wifi_scan_res_type;
 
 typedef struct {
