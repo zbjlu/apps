@@ -19,6 +19,8 @@
 #include "wifi_manager_service.h"
 #include <uki_utlis.h>
 
+#define UINT32_TO_STREAM(p, u32) {*(p)++ = (uint8_t)(u32); *(p)++ = (uint8_t)((u32) >> 8); *(p)++ = (uint8_t)((u32) >> 16); *(p)++ = (uint8_t)((u32) >> 24);}
+#define UINT24_TO_STREAM(p, u24) {*(p)++ = (uint8_t)(u24); *(p)++ = (uint8_t)((u24) >> 8); *(p)++ = (uint8_t)((u24) >> 16);}
 #define UINT16_TO_STREAM(p, u16) {*(p)++ = (uint8_t)(u16); *(p)++ = (uint8_t)((u16) >> 8);}
 #define UINT8_TO_STREAM(p, u8)   {*(p)++ = (uint8_t)(u8);}
 
@@ -142,6 +144,9 @@ void wifimgr_set_conf_and_connect(const void *buf)
 	p+=pwd_len;
 	BTD("%s, passwd = %s\n", __func__, conf.passwd);
 	strcpy(cur_wifi_status.passwd, conf.passwd);
+
+	conf.wifi_type = WIFIMGR_IFACE_STA;
+	BTD("%s, conf.wifi_type = %d\n", __func__, conf.wifi_type);
 
 	if (wifimgr_get_ctrl_ops()->set_conf) {
 		ret = wifimgr_get_ctrl_ops_cbs(get_wifimgr_cbs())->set_conf(WIFIMGR_IFACE_NAME_STA,
@@ -267,6 +272,9 @@ void wifimgr_set_conf_and_interval(const void *buf)
 	p += 4;
 	BTD("%s, conf.autorun = %d\n", __func__, conf.autorun);
 
+	conf.wifi_type = WIFIMGR_IFACE_STA;
+	BTD("%s, conf.wifi_type = %d\n", __func__, conf.wifi_type);
+
 	if (wifimgr_get_ctrl_ops()->set_conf) {
 		ret = wifimgr_get_ctrl_ops_cbs(get_wifimgr_cbs())->set_conf(WIFIMGR_IFACE_NAME_STA,
 									(ssid_len > 0 ? conf.ssid : NULL),
@@ -376,7 +384,8 @@ void wifimgr_get_conf(const void *buf)
 	ret = wifimgr_get_ctrl(WIFIMGR_IFACE_NAME_STA);
 	if (ret) {
 		BTD("%s: failed to get ctrl! %d\n", __func__, ret);
-		return;
+		res_result = RESULT_FAIL;
+		goto err;
 	}
 	if (wifimgr_get_ctrl_ops()->get_conf) {
 		ret = wifimgr_get_ctrl_ops_cbs(get_wifimgr_cbs())->get_conf(WIFIMGR_IFACE_NAME_STA);
@@ -393,6 +402,7 @@ void wifimgr_get_conf(const void *buf)
 		return;
 	}
 
+err:
 	data[0] = RESULT_GET_CONF;
 	data[1] = res_result;
 
@@ -440,7 +450,7 @@ void wifimgr_ctrl_iface_get_sta_conf_cb(char *ssid, char *bssid, char *passphras
 		bssid_len = 0;
 	}
 
-	BTD("%s, band:%d, channel:%d\n", __func__, band, channel);
+	BTD("%s, band:%d, channel:%d security:%u, autorun:%d\n", __func__, band, channel, security, autorun);
 
 	if ((ssid_len > MAX_SSID_LEN)
 		|| (bssid_len > BSSID_LEN)
@@ -455,15 +465,22 @@ void wifimgr_ctrl_iface_get_sta_conf_cb(char *ssid, char *bssid, char *passphras
 	}
 
 	memset(&conf, 0, sizeof(conf));
+	conf.wifi_type = WIFIMGR_IFACE_STA;
 	memcpy(conf.ssid, ssid, ssid_len);
 	memcpy(conf.bssid, bssid, bssid_len);
 	memcpy(conf.passwd, passphrase, passwd_len);
-	data_len = 6 + ssid_len + bssid_len +passwd_len;
+	conf.band = band;
+	conf.channel = channel;
+	conf.security = security;
+	conf.autorun = autorun;
+
+	data_len = 1 + 6 + 7 + ssid_len + bssid_len +passwd_len;
 	res_result = RESULT_SUCCESS;
 
 	p = data;
 	UINT8_TO_STREAM(p, RESULT_GET_CONF);
 	UINT8_TO_STREAM(p, res_result);
+	UINT8_TO_STREAM(p, conf.wifi_type);
 	UINT16_TO_STREAM(p, data_len);
 
 	UINT16_TO_STREAM(p, ssid_len);
@@ -481,6 +498,11 @@ void wifimgr_ctrl_iface_get_sta_conf_cb(char *ssid, char *bssid, char *passphras
 		UINT8_TO_STREAM(p, conf.passwd[i]);
 	}
 
+	UINT8_TO_STREAM(p, conf.band);
+	UINT8_TO_STREAM(p, conf.channel);
+	UINT8_TO_STREAM(p, conf.security);
+	UINT32_TO_STREAM(p, conf.autorun);
+
 	wifi_manager_notify(data, data_len + 4);
 }
 
@@ -494,7 +516,6 @@ void wifimgr_ctrl_iface_get_ap_conf_cb(char *ssid, char *passphrase, unsigned ch
 	char data[255] = {0};
 	u16_t data_len = 0;
 	u16_t ssid_len = 0;
-	u16_t bssid_len = 0;
 	u16_t passwd_len = 0;
 	char *p = NULL;
 	int i;
@@ -515,21 +536,9 @@ void wifimgr_ctrl_iface_get_ap_conf_cb(char *ssid, char *passphrase, unsigned ch
 		passwd_len = 0;
 	}
 
-	/*if (bssid) {
-		bssid_len = BSSID_LEN;
-		for (i = 0; i < bssid_len; i++) {
-			BTD("bssid = 0x%02x\n", bssid[i]);
-		}
-	} else {
-		BTD("%s ,bssid = NULL\n", __func__);
-		bssid_len = 0;
-	}*/
+	BTD("%s, band:%d, channel:%d, ch_width:%d, security:%u, autorun:%d\n", __func__, band, channel, ch_width, security, autorun);
 
-	BTD("%s, band:%d, channel:%d\n", __func__, band, channel);
-
-	if ((ssid_len > MAX_SSID_LEN)
-		|| (bssid_len > BSSID_LEN)
-		|| (passwd_len > MAX_PSWD_LEN)) {
+	if ((ssid_len > MAX_SSID_LEN) || (passwd_len > MAX_PSWD_LEN)) {
 		res_result = RESULT_FAIL;
 		data[0] = RESULT_GET_CONF;
 		data[1] = res_result;
@@ -540,15 +549,21 @@ void wifimgr_ctrl_iface_get_ap_conf_cb(char *ssid, char *passphrase, unsigned ch
 	}
 
 	memset(&conf, 0, sizeof(conf));
+	conf.wifi_type = WIFIMGR_IFACE_AP;
 	memcpy(conf.ssid, ssid, ssid_len);
-	/*memcpy(conf.bssid, bssid, bssid_len);*/
 	memcpy(conf.passwd, passphrase, passwd_len);
-	data_len = 6 + ssid_len + bssid_len +passwd_len;
+	conf.band = band;
+	conf.channel = channel;
+	conf.security = security;
+	conf.autorun = autorun;
+
+	data_len = 1 + 4 + 7 + ssid_len + passwd_len;
 	res_result = RESULT_SUCCESS;
 
 	p = data;
 	UINT8_TO_STREAM(p, RESULT_GET_CONF);
 	UINT8_TO_STREAM(p, res_result);
+	UINT8_TO_STREAM(p, conf.wifi_type);
 	UINT16_TO_STREAM(p, data_len);
 
 	UINT16_TO_STREAM(p, ssid_len);
@@ -556,15 +571,15 @@ void wifimgr_ctrl_iface_get_ap_conf_cb(char *ssid, char *passphrase, unsigned ch
 		UINT8_TO_STREAM(p, conf.ssid[i]);
 	}
 
-	UINT16_TO_STREAM(p, bssid_len);
-	for (i = 0; i < bssid_len; i++) {
-		UINT8_TO_STREAM(p, conf.bssid[i]);
-	}
-
 	UINT16_TO_STREAM(p, passwd_len);
 	for (i = 0; i < passwd_len; i++) {
 		UINT8_TO_STREAM(p, conf.passwd[i]);
 	}
+
+	UINT8_TO_STREAM(p, conf.band);
+	UINT8_TO_STREAM(p, conf.channel);
+	UINT8_TO_STREAM(p, conf.security);
+	UINT32_TO_STREAM(p, conf.autorun);
 
 	wifi_manager_notify(data, data_len + 4);
 }

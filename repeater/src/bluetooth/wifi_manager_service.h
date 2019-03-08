@@ -35,7 +35,13 @@
 #define RESULT_SET_CONF_AND_INTERVAL   0x8D
 #define RESULT_MAC_ACL_REPORT          0x8E
 
+enum wifimgr_iface_type {
+	WIFIMGR_IFACE_STA = 0,
+	WIFIMGR_IFACE_AP,
+};
+
 typedef struct {
+	unsigned char wifi_type;
 	char ssid[MAX_SSID_LEN+1];
 	char bssid[BSSID_LEN+1];
 	char passwd[MAX_PSWD_LEN+1];
