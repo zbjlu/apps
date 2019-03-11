@@ -912,39 +912,47 @@ void wifimgr_set_mac_acl(const void *buf)
 	char *pmac = NULL;
 	u8_t acl_subcmd = 0;
 	u8_t bssid_len = 0;
-	const u8_t *p = buf;
+	const u8_t *p = (u8_t *)buf;
 
 	vlen = sys_get_le16(p);
 	p += 2;
 	BTD("%s, AllDateLen = 0x%x\n", __func__, vlen);
 
-	bssid_len = sys_get_le16(p);
-	BTD("%s, bssid_len = %d\n", __func__, bssid_len);
-
-	if (BSSID_LEN != bssid_len && 1 != bssid_len) {
-		BTD("%s, error! station mac len = %d\n", __func__, bssid_len);
-		res_result = RESULT_FAIL;
-		goto error_1;
-	} else if (BSSID_LEN == bssid_len) {
-		p += 2;
-		memcpy(station_mac, p, bssid_len);
-	}
-
-	pmac = bssid_len == BSSID_LEN ? station_mac : NULL;
-
-	p += bssid_len;
 	acl_subcmd = p[0];
 	p += 1;
 	BTD("%s, acl_subcmd = %d\n", __func__, acl_subcmd);
 	if (acl_subcmd <= 0) {
 		BTD("%s: failed to get acl_subcmd! %d\n", __func__, acl_subcmd);
 		res_result = RESULT_FAIL;
-		goto error_1;
+		data_len = 2;
+		goto error;
 	}
+
+	if (vlen > 1)
+	{
+		bssid_len = sys_get_le16(p);
+		BTD("%s, bssid_len = %d\n", __func__, bssid_len);
+
+		if (BSSID_LEN != bssid_len && 1 != bssid_len)
+		{
+			BTD("%s, error! station mac len = %d\n", __func__, bssid_len);
+			res_result = RESULT_FAIL;
+			goto error_1;
+		}
+		else if (BSSID_LEN == bssid_len)
+		{
+			p += 2;
+			memcpy(station_mac, p, bssid_len);
+		}
+	}
+
+	pmac = bssid_len == BSSID_LEN ? station_mac : NULL;
+	p += bssid_len;
 
 	ret = wifimgr_get_ctrl(WIFIMGR_IFACE_NAME_AP);
 	if (ret) {
 		BTD("%s: failed to get ctrl! %d\n", __func__, ret);
+		res_result = RESULT_FAIL;
 		goto error_2;
 	}
 	if (wifimgr_get_ctrl_ops()->set_mac_acl) {
@@ -967,18 +975,16 @@ void wifimgr_set_mac_acl(const void *buf)
 error_2:
 	wifimgr_release_ctrl(WIFIMGR_IFACE_NAME_AP);
 error_1:
-	if (!pmac) {
-		BTD("pmac = NULL\n");
-		res_result = RESULT_FAIL;
-		data_len = 2;
-		goto error;
-	}
-	BTD("res_result : %d, mac : %02x:%02x:%02x:%02x:%02x:%02x\n", res_result, pmac[0], pmac[1], pmac[2], pmac[3], pmac[4], pmac[5]);
-
 	data[2] = acl_subcmd;
-	memcpy(&data[3], pmac, BSSID_LEN);
-	res_result = RESULT_SUCCESS;
-	data_len = 9;
+
+	if (!pmac) {
+		BTD("res_result : %d, mac = NULL, AllDateLen = %u\n", res_result, vlen);
+		data_len = 3;
+	} else {
+		BTD("res_result : %d, mac : %02x:%02x:%02x:%02x:%02x:%02x\n", res_result, pmac[0], pmac[1], pmac[2], pmac[3], pmac[4], pmac[5]);
+		memcpy(&data[3], pmac, BSSID_LEN);
+		data_len = 9;
+	}
 error:
 	data[0] = RESULT_MAC_ACL_REPORT;
 	data[1] = res_result;
