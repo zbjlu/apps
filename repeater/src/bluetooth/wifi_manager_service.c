@@ -145,6 +145,18 @@ void wifimgr_set_conf_and_connect(const void *buf)
 	BTD("%s, passwd = %s\n", __func__, conf.passwd);
 	strcpy(cur_wifi_status.passwd, conf.passwd);
 
+	conf.security = p[0];
+	p += 1;
+	if ((conf.security >= 1) && (conf.security <= 3)) {
+		BTD("security:%u\n", conf.security);
+	} else {
+		BTE("%s ,security err = %u\n", __func__, conf.security);
+	}
+
+	conf.autorun = (int)sys_get_le32(p);
+	p += 4;
+	BTD("%s, conf.autorun = %d\n", __func__, conf.autorun);
+
 	conf.wifi_type = WIFIMGR_IFACE_STA;
 	BTD("%s, conf.wifi_type = %d\n", __func__, conf.wifi_type);
 
@@ -268,7 +280,16 @@ void wifimgr_set_conf_and_interval(const void *buf)
 	BTD("%s, passwd = %s\n", __func__, conf.passwd);
 	strcpy(cur_wifi_status.passwd, conf.passwd);
 
-	conf.autorun = sys_get_le32(p);
+	conf.security = p[0];
+	p += 1;
+	if ((conf.security >= 1) && (conf.security <= 3)) {
+		BTD("security:%u\n", conf.security);
+	} else {
+		BTE("%s ,security err = %u\n", __func__, conf.security);
+		res_result = RESULT_FAIL;
+	}
+
+	conf.autorun = (int)sys_get_le32(p);
 	p += 4;
 	BTD("%s, conf.autorun = %d\n", __func__, conf.autorun);
 
