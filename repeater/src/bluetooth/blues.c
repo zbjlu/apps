@@ -80,7 +80,7 @@ static void bt_ready(int err)
 
 	throughput_init();
 #ifdef CONFIG_WIFIMGR
-	wifi_manager_service_init();
+	/*wifi_manager_service_init();*/
 #endif
 	change_device_name();
 
