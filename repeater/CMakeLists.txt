@@ -6,7 +6,11 @@ target_sources(app PRIVATE src/main.c)
 target_sources(app PRIVATE src/shell.c)
 target_sources(app PRIVATE src/test.c)
 
-include_directories($ENV{ZEPHYR_BASE}/ext/hal/unisoc/)
+target_sources_ifdef(
+  CONFIG_WIFIMGR
+  app PRIVATE
+  $ENV{ZEPHYR_BASE}/samples/wifi/repeater/src/main.c
+  )
 
 target_sources_ifdef(
   CONFIG_BT_UWP5661

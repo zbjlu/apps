@@ -9,6 +9,7 @@ LOG_MODULE_REGISTER(REPEATER);
 #include <misc/printk.h>
 
 extern void blues_init(void);
+extern void wifi_repeater(void);
 void main(void)
 {
 	LOG_INF("   [UNISOC Wi-Fi Repeater]");
@@ -16,6 +17,7 @@ void main(void)
 #ifdef CONFIG_BT_UWP5661
 	blues_init();
 #endif
-
-	while(1) {}
+#ifdef CONFIG_WIFIMGR
+	wifi_repeater();
+#endif
 }
