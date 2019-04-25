@@ -185,10 +185,10 @@ static int cmd_led(const struct shell *shell, size_t argc, char **argv)
 	struct device *led_dev;
 	int led_pin, led;
 	int on_off;
-	int err = shell_cmd_precheck(shell, (argc == 3), NULL, 0);
 
-	if (err) {
-		return err;
+	if (argc != 3) {
+		shell_fprintf(shell, SHELL_ERROR, "argc must be 3.\n");
+		return -1;
 	}
 
 	led_dev = device_get_binding(LED_NAME);

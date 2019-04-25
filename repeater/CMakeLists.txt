@@ -33,6 +33,28 @@ target_sources_ifdef(
   src/ota/ota_shell.c
   )
 
+target_sources_ifdef(
+  CONFIG_ZPERF
+  app PRIVATE
+  $ENV{ZEPHYR_BASE}/samples/net/zperf/src/shell_utils.c
+  $ENV{ZEPHYR_BASE}/samples/net/zperf/src/zperf_tcp_receiver.c
+  $ENV{ZEPHYR_BASE}/samples/net/zperf/src/zperf_udp_receiver.c
+  $ENV{ZEPHYR_BASE}/samples/net/zperf/src/zperf_session.c
+  $ENV{ZEPHYR_BASE}/samples/net/zperf/src/zperf_shell.c
+  $ENV{ZEPHYR_BASE}/samples/net/zperf/src/zperf_tcp_uploader.c
+  $ENV{ZEPHYR_BASE}/samples/net/zperf/src/zperf_udp_uploader.c
+  )
+
+# include files zperf needs
+target_include_directories(app PRIVATE
+  $ENV{ZEPHYR_BASE}/subsys/net/ip
+  )
+
+# include files zperf needs
+target_include_directories(app PRIVATE
+  $ENV{ZEPHYR_BASE}/samples/net/zperf/src
+  )
+
 add_subdirectory_ifdef(CONFIG_DHRYSTONE	dhrystone)
 add_subdirectory_ifdef(CONFIG_ENGPC	engpc)
 add_subdirectory_ifdef(CONFIG_IWNPI	iwnpi)

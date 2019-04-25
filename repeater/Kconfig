@@ -13,9 +13,9 @@ source "subsys/logging/Kconfig.template.log_config"
 source "Kconfig.zephyr"
 
 config DHRYSTONE
-        bool "dhrystone benchmark"
+	bool "dhrystone benchmark"
 	help
-           Enable the dhrystone benchmark.
+	   Enable the dhrystone benchmark.
 
 config ENGPC
 	bool "ENGPC test tool"
@@ -44,8 +44,11 @@ config FLASH_TEST
 	   Enable the flash test
 
 config OTA
-	bool
-	select HTTP
-	select HTTP_CLINET
+	bool "OTA upgrade"
 	help
 	   Enable ota
+
+config ZPERF
+	bool "sample zperf"
+	help
+	   Enable sample zperf
