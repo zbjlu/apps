@@ -17,8 +17,7 @@ LOG_MODULE_DECLARE(LOG_MODULE_NAME);
 
 #include <net/net_core.h>
 #include <net/net_ip.h>
-#include <net/http.h>
-#include <net/net_app.h>
+#include <net/http_client.h>
 
 #include <flash.h>
 #include <device.h>
@@ -31,12 +30,8 @@ LOG_MODULE_DECLARE(LOG_MODULE_NAME);
  */
 static struct http_ctx http_ctx;
 static struct stc_ota_cfg ota_cfg;
+static int ota_req_size;
 
-/* This will contain the returned HTTP response to a sent request */
-#if !defined(RESULT_BUF_SIZE)
-#define RESULT_BUF_SIZE 4096
-#endif
-static u8_t result[RESULT_BUF_SIZE];
 
 #define BIN_BUF_SIZE (10 * 1024)
 u8_t *bin_buff;
@@ -44,9 +39,9 @@ u8_t *bin_buff;
 static struct device *flash_device;
 
 #define OTA_IMAGE_OK_OFFS(bank_offs) \
-			(bank_offs + FLASH_AREA_IMAGE_0_SIZE - 16 - 8)
+			(bank_offs + DT_FLASH_AREA_IMAGE_0_SIZE - 16 - 8)
 #define OTA_MAGIC_OFFS(bank_offs) \
-			(bank_offs + FLASH_AREA_IMAGE_0_SIZE - 16)
+			(bank_offs + DT_FLASH_AREA_IMAGE_0_SIZE - 16)
 
 struct waiter {
 	struct http_ctx *ctx;
@@ -178,229 +173,27 @@ static int do_write(off_t offset, u8_t *buf, size_t len, bool read_back)
 	return ret;
 }
 
-static void
-http_received(struct http_ctx *ctx,
-	      struct net_pkt *pkt,
-	      int status,
-	      u32_t flags, const struct sockaddr *dst, void *user_data)
+static void http_resp_callback(struct http_ctx *pctx,
+					const char *body,
+					int body_len,
+					enum http_final_call final_data)
 {
-	if (!status) {
-		if (pkt) {
-			OTA_INFO("Received %d bytes data",
-				 net_pkt_appdatalen(pkt));
-			net_pkt_unref(pkt);
-		}
+	static int app_buf_len;
+
+	/** body can't receive commplete*/
+	if (final_data == HTTP_DATA_MORE) {
+		/** copy the body to app buff*/
+		memcpy(&bin_buff[ota_req_size % BIN_BUF_SIZE], body, body_len);
+		app_buf_len += body_len;
+		printk("Got Http Body (%d) bytes, except (%d) bytes.\n",
+			app_buf_len, pctx->rsp.content_length);
 	} else {
-		OTA_ERR("Receive error (%d)", status);
-
-		if (pkt) {
-			net_pkt_unref(pkt);
+		/** the body of http response has received complete*/
+		if (pctx->rsp.message_complete) {
+			app_buf_len = 0;
+			printk("*****Response Body Received Complete******\n");
 		}
 	}
-}
-
-void
-response(struct http_ctx *ctx,
-	 u8_t *data, size_t buflen,
-	 size_t datalen, enum http_final_call data_end, void *user_data)
-{
-	struct waiter *waiter = user_data;
-	int ret;
-
-	if (data_end == HTTP_DATA_MORE) {
-		OTA_INFO("Received %zd bytes piece of data", datalen);
-
-		/* Do something with the data here. For this example
-		 * we just ignore the received data.
-		 */
-		waiter->total_len += datalen;
-
-		if (ctx->http.rsp.body_start) {
-			/* This fragment contains the start of the body
-			 * Note that the header length is not proper if
-			 * the header is spanning over multiple recv
-			 * fragments.
-			 */
-			waiter->header_len = ctx->http.rsp.body_start -
-			    ctx->http.rsp.response_buf;
-		}
-
-		return;
-	}
-
-	waiter->total_len += datalen;
-
-	OTA_INFO("HTTP server resp status: %s", ctx->http.rsp.http_status);
-
-	if (ctx->http.parser.http_errno) {
-		if (ctx->http.req.method == HTTP_OPTIONS) {
-			/* Ignore error if OPTIONS is not found */
-			goto out;
-		}
-
-		OTA_INFO("HTTP parser status: %s",
-			 http_errno_description(ctx->http.parser.http_errno));
-		ret = -EINVAL;
-		goto out;
-	}
-
-	if (ctx->http.req.method != HTTP_HEAD &&
-	    ctx->http.req.method != HTTP_OPTIONS) {
-		if (ctx->http.rsp.body_found) {
-			OTA_INFO("HTTP body: %zd bytes, expected: %zd bytes",
-				 ctx->http.rsp.processed,
-				 ctx->http.rsp.content_length);
-		} else {
-			OTA_ERR("Error detected during HTTP msg processing");
-		}
-
-		if (waiter->total_len !=
-		    waiter->header_len + ctx->http.rsp.content_length) {
-			OTA_ERR("Error while receiving data, "
-				"received %zd expected %zd bytes",
-				waiter->total_len, waiter->header_len +
-				ctx->http.rsp.content_length);
-		}
-	}
-
-out:
-	k_sem_give(&waiter->wait);
-}
-
-#ifdef DO_ASYNC_HTTP_REQ
-static int
-do_async_http_req(struct http_ctx *ctx,
-		  enum http_method method,
-		  const char *url,
-		  const char *payload, int index_start, int index_end)
-{
-	struct http_request reqs = { };
-	struct waiter waiter;
-	char temp[200];
-	int ret;
-
-	reqs.method = method;
-	reqs.url = url;
-	reqs.protocol = " " HTTP_PROTOCOL;
-
-	k_sem_init(&waiter.wait, 0, 1);
-
-	waiter.total_len = 0;
-
-	memset(temp, 0, sizeof(temp));
-	sprintf(temp,
-		"Range: bytes=%d-%d\r\nUser-Agent:curl/7.58.0\r\nAccept:*/*\r\n",
-		index_start, index_end);
-
-	reqs.header_fields = temp;
-
-	ret = http_client_send_req(ctx, &reqs, response, result, sizeof(result),
-				   &waiter, OTA_HTTP_REQ_TIMEOUT);
-
-	if (ret < 0 && ret != -EINPROGRESS) {
-		OTA_ERR("Cannot send %s request (%d)", http_method_str(method),
-			ret);
-		goto out;
-	}
-
-	if (k_sem_take(&waiter.wait, WAIT_TIME)) {
-		OTA_ERR("Timeout while waiting HTTP response");
-		ret = -ETIMEDOUT;
-		http_request_cancel(ctx);
-		goto out;
-	}
-
-	ret = 0;
-
-out:
-	http_close(ctx);
-
-	return ret;
-}
-#endif
-
-static int
-do_sync_http_req(struct http_ctx *ctx,
-		 enum http_method method,
-		 const char *url,
-		 const char *content_type,
-		 const char *payload, int index_start, int index_end)
-{
-	struct http_request req = { };
-	char temp[200];
-	int ret;
-	const char *status;
-
-	req.method = method;
-	req.url = url;
-	req.protocol = " " HTTP_PROTOCOL;
-	status = http_errno_description(ctx->http.parser.http_errno);
-
-	memset(temp, 0, sizeof(temp));
-	sprintf(temp,
-		"Range: bytes=%d-%d\r\nUser-Agent:curl/7.58.0\r\nAccept:*/*\r\n",
-		index_start, index_end);
-
-	/*add Range field with http request */
-	req.header_fields = temp;
-
-	ret = http_client_send_req(ctx, &req, NULL, result, sizeof(result),
-				   NULL, OTA_HTTP_REQ_TIMEOUT);
-	if (ret < 0) {
-		OTA_ERR("Cannot send %s request (%d)\n",
-			http_method_str(method), ret);
-		goto out;
-	}
-
-	if (!memcmp(ctx->http.rsp.http_status, HTTP_RSP_STATS_NOT_FOUND,
-		    strlen(HTTP_RSP_STATS_NOT_FOUND))) {
-		OTA_ERR("Http Response: Not Found\n");
-		ret = -ENOENT;
-		goto out;
-	}
-
-	if (ctx->http.rsp.data_len > sizeof(result)) {
-		OTA_ERR("Result buffer overflow by %zd bytes\n",
-			ctx->http.rsp.data_len - sizeof(result));
-
-		ret = -E2BIG;
-	} else {
-		if (ctx->http.parser.http_errno) {
-			if (method == HTTP_OPTIONS) {
-				/* Ignore error if OPTIONS is not found */
-				goto out;
-			}
-
-			ret = -EINVAL;
-			goto out;
-		}
-
-		if (method != HTTP_HEAD) {
-			if (ctx->http.rsp.body_found) {
-				if (ctx->http.rsp.processed ==
-				    ctx->http.rsp.content_length) {
-					memcpy(&bin_buff
-					       [index_start % BIN_BUF_SIZE],
-					       ctx->http.rsp.body_start,
-					       ctx->http.rsp.processed);
-				} else {
-					OTA_ERR("rsp.processed != "
-						"connent_len\n");
-					ret = -EINVAL;
-					goto out;
-				}
-			} else {
-				ret = -ENOPROTOOPT;
-				OTA_ERR("Error detected during HTTP msg "
-					"processing.\n");
-			}
-		}
-	}
-
-out:
-	http_close(ctx);
-
-	return ret;
 }
 
 static int do_download(struct stc_ota_cfg *p_ota_cfg)
@@ -409,24 +202,26 @@ static int do_download(struct stc_ota_cfg *p_ota_cfg)
 	int req_count = p_ota_cfg->bin_cfg.file_len;
 	char *url = p_ota_cfg->bin_cfg.url_path;
 	char *srv_ip = p_ota_cfg->bin_cfg.host_ip;
-	u16_t srv_port = p_ota_cfg->bin_cfg.host_port;
+	char *srv_port = p_ota_cfg->bin_cfg.host_port;
 	int req_count_start = 0;
 	int req_count_end = 0;
 	int repeate_count = 0;
+	int restart_count = 0;
 	int write_size = 0;
+	char temp[200];
+	int ret;
 
+restart:
+	restart_count++;
 	/*init http client */
-	int ret = http_client_init(&http_ctx, srv_ip, srv_port, NULL,
-				   K_FOREVER);
-
+	ota_req_size = 0;
+	ret = http_client_init(&http_ctx, srv_ip, srv_port, false);
 	if (ret < 0) {
 		OTA_ERR("HTTP init failed (%d)", ret);
 		goto out;
 	}
 
-	/*http registe the calllback */
-	http_set_cb(&http_ctx, NULL, http_received, NULL, NULL);
-
+	http_set_resp_callback(&http_ctx, http_resp_callback);
 	/*request the file from servers and write to flash */
 	while (req_count > 0) {
 		if (req_count > OTA_COUNT_EACH_ONE) {
@@ -444,22 +239,28 @@ repeate:
 		OTA_INFO("req count:req_count_start=%d req_count_end=%d.\n",
 			 req_count_start, req_count_end);
 
-#ifdef DO_ASYNC_HTTP_REQ
-		ret = do_async_http_req(&http_ctx, HTTP_GET, url, NULL,
-					req_count_start, req_count_end);
-#else
-		ret = do_sync_http_req(&http_ctx, HTTP_GET, url,
-				       NULL, NULL, req_count_start,
-				       req_count_end);
-#endif
+		memset(temp, 0, sizeof(temp));
+		sprintf(temp, "Range: bytes=%d-%d\r\n",
+				req_count_start, req_count_end);
+		http_add_header_field(&http_ctx, temp);
+
+		ret = http_client_get(&http_ctx, url, true, NULL);
 
 		if (ret < 0) {
-
 			repeate_count++;
-			OTA_ERR("HTTP do_async_http_req failed (%d).\n", ret);
-			if (repeate_count >= OTA_HTTP_REPEAT_REQ_MAX) {
+			OTA_ERR("HTTP Get Request failed (%d).\n", ret);
+			if (restart_count >= 5) {
+				OTA_INFO(" Download Failed!\n");
 				goto out;
 			}
+			if ((repeate_count >= OTA_HTTP_REPEAT_REQ_MAX) ||
+				(ret == -1)) {
+				OTA_INFO("Disconnect! Restart Http client!\n");
+				http_client_close(&http_ctx);
+				goto restart;
+			}
+
+
 			k_sleep(500);
 			goto repeate;
 		}
@@ -467,8 +268,7 @@ repeate:
 		/*got BIN_BUF_SIZE, so need to write flash */
 		if ((0 == (req_count_end + 1) % BIN_BUF_SIZE)
 		    || (req_count == 0)) {
-			OTA_INFO
-			    ("Now, Start to write flash, startAddr=0x%08lX\n",
+			OTA_INFO("Write Flash[0x%08lX]\n",
 			     flash_addr);
 
 			do_write(flash_addr, bin_buff, write_size, true);
@@ -478,15 +278,15 @@ repeate:
 			memset(bin_buff, 0, BIN_BUF_SIZE);
 		}
 
-		k_sleep(200);
+		k_sleep(50);
 		req_count_start = req_count_end + 1;
+		ota_req_size = req_count_start;
 		repeate_count = 0;
 	}
 	ret = 0;
-out:
-	http_release(&http_ctx);
-
 	OTA_INFO(" Download Done!\n");
+out:
+	http_client_close(&http_ctx);
 
 	return ret;
 }
@@ -513,11 +313,11 @@ static int ota_set_kerenl_pending(bool permanent)
 		0x8079b62c,
 	};
 
-	off = OTA_MAGIC_OFFS(FLASH_AREA_IMAGE_1_OFFSET);
+	off = OTA_MAGIC_OFFS(DT_FLASH_AREA_IMAGE_1_OFFSET);
 	do_write(off, (u8_t *) boot_img_magic_1, 16, true);
 
 	if (permanent) {
-		off = OTA_IMAGE_OK_OFFS(FLASH_AREA_IMAGE_1_OFFSET);
+		off = OTA_IMAGE_OK_OFFS(DT_FLASH_AREA_IMAGE_1_OFFSET);
 		memset(buf, 0xFF, sizeof(buf));
 		buf[0] = 0x01;
 		do_write(off, buf, sizeof(buf), true);
@@ -590,18 +390,17 @@ static int ota_init_cfg(u8_t type)
 	int flash_area_id;
 	int rc = 0;
 
+	ota_cfg.bin_cfg.host_ip = CONFIG_OTA_SVR_ADDR;
+	ota_cfg.bin_cfg.host_port = CONFIG_OTA_SVR_PORT;
+
 	switch (type) {
 	case OTA_KERNEL:
-		ota_cfg.bin_cfg.host_ip = OTA_SVR_ADDR;
-		ota_cfg.bin_cfg.host_port = OTA_SVR_PORT;
 		ota_cfg.bin_cfg.url_path = OTA_KERNEL_BIN_URL;
 		ota_cfg.bin_cfg.file_len = OTA_KERNEL_BIN_SIZE;
 
 		rc = flash_area_open(OTA_FA_SLOT_1, &fa);
 		break;
 	case OTA_MODEM:
-		ota_cfg.bin_cfg.host_ip = OTA_SVR_ADDR;
-		ota_cfg.bin_cfg.host_port = OTA_SVR_PORT;
 		ota_cfg.bin_cfg.url_path = OTA_MODEM_BIN_URL;
 		ota_cfg.bin_cfg.file_len = OTA_MODEM_BIN_SIZE;
 
@@ -639,13 +438,6 @@ static int ota_download_finished(u8_t type)
 static int ota_download(const struct shell *shell, size_t argc, char **argv)
 {
 	int ret = 0;
-	int err = shell_cmd_precheck(shell, (argc == 2), NULL, 0);
-
-	if (err) {
-		shell_fprintf(shell, SHELL_ERROR,
-			      "Invalid input,Please check it.\n");
-		return err;
-	}
 
 	flash_device = device_get_binding(DT_FLASH_DEV_NAME);
 	if (flash_device) {
@@ -671,7 +463,7 @@ static int ota_download(const struct shell *shell, size_t argc, char **argv)
 		ota_cfg.type = OTA_OTHER;
 		shell_fprintf(shell, SHELL_ERROR,
 			      "Invalid input,Parametr is %d.\n", argv[1]);
-		return err;
+		return -1;
 	}
 
 	ret = ota_init_cfg(ota_cfg.type);
@@ -705,25 +497,18 @@ static int ota_verify(const struct shell *shell, size_t argc, char **argv)
 	unsigned long int check_flash_addr1, check_flash_addr2;
 	int check_size = 32;
 	char buf[check_size];
-
-	int ret = shell_cmd_precheck(shell, (argc == 2), NULL, 0);
-
-	if (ret) {
-		shell_fprintf(shell, SHELL_ERROR,
-			      "Invalid input,Please check it.\n");
-		return ret;
-	}
+	int ret;
 
 	/*check the parameter */
 	if (!strcmp(argv[1], "-s0")) {
-		check_flash_addr1 = FLASH_AREA_IMAGE_0_OFFSET;
+		check_flash_addr1 = DT_FLASH_AREA_IMAGE_0_OFFSET;
 		check_flash_addr2 =
-		    FLASH_AREA_IMAGE_0_OFFSET + FLASH_AREA_IMAGE_0_SIZE - 32;
+		  check_flash_addr1 + DT_FLASH_AREA_IMAGE_0_SIZE - 32;
 		OTA_INFO("Check slot0 Partition...\n");
 	} else if (!strcmp(argv[1], "-s1")) {
-		check_flash_addr1 = FLASH_AREA_IMAGE_1_OFFSET;
+		check_flash_addr1 = DT_FLASH_AREA_IMAGE_1_OFFSET;
 		check_flash_addr2 =
-		    FLASH_AREA_IMAGE_1_OFFSET + FLASH_AREA_IMAGE_1_SIZE - 32;
+		  check_flash_addr1 + DT_FLASH_AREA_IMAGE_1_SIZE - 32;
 		OTA_INFO("Check slot1 Partition...\n");
 	} else {
 		shell_fprintf(shell, SHELL_ERROR, "Invalid input.\n");
@@ -763,8 +548,8 @@ static int ota_verify(const struct shell *shell, size_t argc, char **argv)
 static int test_flash(const struct shell *shell, size_t argc, char **argv)
 {
 	char buf[16];
-	u32_t test_flash_addr = (FLASH_AREA_STORAGE_OFFSET + 0x4000);
-	int test_flash_size = 0x1000;
+	u32_t test_flash_addr = (DT_FLASH_AREA_STORAGE_OFFSET + 0x4000);
+	int test_flash_size = OTA_TEST_BIN_SIZE;
 
 	/*init flash */
 	flash_device = device_get_binding(DT_FLASH_DEV_NAME);
@@ -787,8 +572,7 @@ static int test_flash(const struct shell *shell, size_t argc, char **argv)
 	return 0;
 }
 
-SHELL_CREATE_STATIC_SUBCMD_SET(ota_cmd)
-{
+SHELL_STATIC_SUBCMD_SET_CREATE(ota_cmd,
 	SHELL_CMD(download, NULL,
 	"download the firmware from internet,include kernel and modem.\n"
 	"Usage: download <type> -k:download kernel -m:download modem",
@@ -801,7 +585,7 @@ SHELL_CREATE_STATIC_SUBCMD_SET(ota_cmd)
 	"test flash for writing and reading!",
 	test_flash),
 	SHELL_SUBCMD_SET_END	/* Array terminated. */
-};
+);
 
 /* Creating root (level 0) command "app" */
 SHELL_CMD_REGISTER(ota, &ota_cmd, "OTA with upgrade firmware", NULL);

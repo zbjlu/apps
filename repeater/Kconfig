@@ -45,8 +45,20 @@ config FLASH_TEST
 
 config OTA
 	bool "OTA upgrade"
+	default n
+	select HTTP_CLINET
 	help
 	   Enable ota
+
+config OTA_SVR_ADDR
+	string "OTA server addr"
+	help
+	   define the server addr
+
+config OTA_SVR_PORT
+	string "OTA server port"
+	help
+	   define the server port
 
 config ZPERF
 	bool "sample zperf"
