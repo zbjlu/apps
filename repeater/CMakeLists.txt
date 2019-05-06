@@ -19,11 +19,11 @@ target_sources_ifdef(
   src/bluetooth/throughput.c
   )
 
-#target_sources_ifdef(
-#  CONFIG_WIFIMGR
-#  app PRIVATE
-#  src/bluetooth/wifi_manager_service.c
-#  )
+target_sources_ifdef(
+  CONFIG_WIFIMGR
+  app PRIVATE
+  src/bluetooth/wifi_manager_service.c
+  )
 
 target_sources_ifdef(
   CONFIG_FLASH_TEST

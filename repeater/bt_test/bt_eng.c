@@ -18,9 +18,7 @@
 #include "bt_eng.h"
 #include "bt_utlis.h"
 
-struct bt_npi_dev bt_npi_dev = {
-	.sync      = _K_SEM_INITIALIZER(bt_npi_dev.sync, 0, 1),
-};
+struct bt_npi_dev bt_npi_dev;
 
 #define CMD_TIMEOUT      K_SECONDS(5)
 
@@ -93,29 +91,37 @@ void bt_npi_recv(unsigned char *data, int len)
 	BTD("%s\n", __func__);
 	u8_t packet_type;
 	u8_t hci_evt;
+	u8_t left_len = len;
+	u8_t* tmp = data;
 
 	BTD("%s, len = %d\n", __func__,len);
-
-	packet_type = data[0];
-	hci_evt = data[1];
-	BTD("%s, packet_type = 0x%02x,hci_evt = 0x%02x\n", __func__,packet_type,hci_evt);
-
-	switch (packet_type) {
-	case HCI_EVT:
-		switch (hci_evt) {
-		case BT_HCI_EVT_CMD_COMPLETE:
-			cmd_complete_handle(&data[3], data[2]);
-			break;
-		case BT_HCI_EVT_CMD_STATUS:
-			cmd_status_handle(&data[3]);
+    
+	do{
+		packet_type = tmp[0];
+		hci_evt = tmp[1];
+		
+		BTD("%s, packet_type = 0x%02x,hci_evt = 0x%02x\n", __func__,packet_type,hci_evt);
+		
+		switch (packet_type) {
+		case HCI_EVT:
+			switch (hci_evt) {
+			case BT_HCI_EVT_CMD_COMPLETE:
+				cmd_complete_handle(&tmp[3], data[2]);
+				break;
+			case BT_HCI_EVT_CMD_STATUS:
+				cmd_status_handle(&tmp[3]);
+				break;
+			default:
+				break;
+			}
 			break;
 		default:
 			break;
 		}
-		break;
-	default:
-		break;
-	}
+		
+		left_len -= (tmp[2] + 3);
+		tmp += (tmp[2]+3);
+	}while(left_len);
 }
 
 int hci_cmd_send_sync(u16_t cmd, u8_t *payload, u8_t len)
@@ -167,7 +173,7 @@ void vendor_init()
 
 int engpc_bt_on(void) {
 	BTD("%s\n",__func__);
-
+    k_sem_init(&bt_npi_dev.sync, 0, 1);
 	vendor_init();
 	return 0;
 }

@@ -1,8 +1,11 @@
 #ifndef __WIFI_MANAGER_SERVICE_H__
 #define __WIFI_MANAGER_SERVICE_H__
 
-#define MAX_SSID_LEN    32
-#define MAX_PSWD_LEN    63
+#include <net/wifi_drv.h>
+#include <net/wifi_api.h>
+
+#define MAX_SSID_LEN    WIFI_MAX_SSID_LEN
+#define MAX_PSWD_LEN	WIFI_MAX_PSPHR_LEN
 #define BSSID_LEN   6
 #define OPCODE_BYTE   1
 #define LEN_BYTE   2
@@ -41,26 +44,13 @@ enum wifimgr_iface_type {
 };
 
 typedef struct {
-	unsigned char wifi_type;
-	char ssid[MAX_SSID_LEN+1];
-	char bssid[BSSID_LEN+1];
-	char passwd[MAX_PSWD_LEN+1];
-	char security;
-	unsigned char band;
-	unsigned char channel;
-	unsigned char ch_width;
-	int autorun;
+	enum wifimgr_iface_type wifi_type;
+	struct wifi_config wifi_conf;
 }wifi_config_type;
 
-typedef struct {
-	char ssid[MAX_SSID_LEN+1];
-	char bssid[BSSID_LEN+1];
-	unsigned char band;
-	unsigned char channel;
-	signed char signal;
-	unsigned char security;
-}wifi_scan_res_type;
+typedef struct wifi_scan_result wifi_scan_res_type;
 
+// TODO: adjust the struct wifi_status_type to adapt the lower struct wifi_status.
 typedef struct {
 	unsigned char sta_status;
 	unsigned char ap_status;
@@ -69,7 +59,7 @@ typedef struct {
 	char passwd[MAX_PSWD_LEN+1];
 	union {
 		struct {
-			char host_rssi;
+			signed char host_rssi;
 			u8_t h_ssid_len;
 			u8_t h_bssid_len;
 			char host_ssid[MAX_SSID_LEN + 1];
@@ -85,21 +75,6 @@ typedef struct {
 }wifi_status_type;
 
 enum {
-	WIFI_STA_STATUS_NODEV,
-	WIFI_STA_STATUS_READY,
-	WIFI_STA_STATUS_SCANNING,
-	WIFI_STA_STATUS_CONNECTING,
-	WIFI_STA_STATUS_CONNECTED,
-	WIFI_STA_STATUS_DISCONNECTING,
-};
-
-enum wifimgr_sm_ap_state {
-	WIFI_AP_STATUS_NODEV,
-	WIFI_AP_STATUS_READY,
-	WIFI_AP_STATUS_STARTED,
-};
-
-enum {
 	RESULT_SUCCESS,
 	RESULT_FAIL,
 };
@@ -109,7 +84,8 @@ void wifi_manager_notify(const void *data, u16_t len);
 int wifimgr_do_scan(int retry_num);
 int wifimgr_do_connect(void);
 int wifimgr_do_disconnect(u8_t flags);
-int wifimgr_do_open(char *iface_name);
-int wifimgr_check_wifi_status(char *iface_name);
-int wifimgr_do_close(char *iface_name);
+void wifimgr_get_conf(enum wifimgr_iface_type wifi_iface_type, const void *buf);
+int wifimgr_do_open(enum wifimgr_iface_type wifi_iface_type);
+int wifimgr_check_wifi_status(enum wifimgr_iface_type wifi_iface_type);
+int wifimgr_do_close(enum wifimgr_iface_type wifi_iface_type);
 #endif
