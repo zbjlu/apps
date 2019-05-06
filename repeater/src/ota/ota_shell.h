@@ -10,18 +10,18 @@
 #define OTA_WARN(fmt, ...)  printf("[WARN] "fmt"\n", ##__VA_ARGS__)
 #define OTA_INFO(fmt, ...)  printf("[INFO] "fmt"\n", ##__VA_ARGS__)
 
-#define OTA_FA_SLOT_0                       1
-#define OTA_FA_SLOT_1                       2
-#define OTA_FA_SCRATCH                      3
-#define OTA_FA_MODEM_0                      4
-#define OTA_FA_MODEM_1                      5
+#define OTA_FA_SLOT_0	DT_FLASH_AREA_IMAGE_0_ID
+#define OTA_FA_SLOT_1	DT_FLASH_AREA_IMAGE_1_ID
+#define OTA_FA_SCRATCH	DT_FLASH_AREA_IMAGE_SCRATCH_ID
+#define OTA_FA_MODEM_0 	DT_FLASH_AREA_MODEM_0_ID
+#define OTA_FA_MODEM_1 	DT_FLASH_AREA_MODEM_1_ID
 
 #define OTA_FA_MODEM_0_ADDR   \
 			(DT_FLASH_BASE_ADDRESS + DT_FLASH_AREA_MODEM_0_OFFSET)
 #define OTA_FA_MODEM_1_ADDR   \
 			(DT_FLASH_BASE_ADDRESS + DT_FLASH_AREA_MODEM_0_OFFSET)
 
-#define FLASH_ERASE_BLOCK_SIZE	(64 * 1024)
+#define FLASH_ERASE_ONCE_SIZE	(64 * 1024)
 
 #define OTA_MODEM_BIN_URL    "/ota/wcn-modem-96b_ivy5661.bin"
 #define OTA_KERNEL_BIN_URL   "/ota/zephyr-signed-ota-96b_ivy5661.bin"
@@ -40,7 +40,8 @@
 
 #define OTA_COUNT_EACH_ONE      2048	/* 4*1024 */
 
-#define OTA_MODEM_START_ADDR_OFF	0x0000D000
+#define OTA_MODEM_START_ADDR_OFF	\
+			(CONFIG_CP_START_ADDR_CONTAINER - DT_FLASH_BASE_ADDRESS)
 #define OTA_MODEM_START_ADDR_SIZE	0x1000
 
 enum OTA_TYPE {

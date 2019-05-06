@@ -94,8 +94,8 @@ static int do_erase(off_t offset, size_t size)
 	int offset_temp = offset;
 
 	while (count) {
-		if (count > FLASH_ERASE_BLOCK_SIZE) {
-			one_size = FLASH_ERASE_BLOCK_SIZE;
+		if (count > FLASH_ERASE_ONCE_SIZE) {
+			one_size = FLASH_ERASE_ONCE_SIZE;
 		} else {
 			one_size = count;
 		}
