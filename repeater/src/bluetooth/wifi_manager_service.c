@@ -63,6 +63,93 @@ struct wifimgr_ctrl_cbs *get_wifimgr_cbs(void);
 extern int get_disable_buf(void *buf);
 extern void sprd_bt_irq_disable(void);
 
+static void wifimgr_ctrl_iface_notify_connect(union wifi_notifier_val val)
+{
+	int result = val.val_char;
+	BTD("%s ,result = %d\n", __func__, result);
+	char data[2] = {0};
+	u8_t res_result = RESULT_SUCCESS;
+
+	if (0 == result) {
+		BTD("%s, connect succesfully\n", __func__);
+		res_result = RESULT_SUCCESS;
+	} else {
+		BTD("%s, connect failed\n", __func__);
+		res_result = RESULT_FAIL;
+	}
+
+	data[0] = RESULT_SET_CONF_AND_CONNECT;
+	data[1] = res_result;
+
+	BTD("%s  enter wifi_manager_notify", __func__);
+	wifi_manager_notify(data, sizeof(data));
+}
+
+static void wifimgr_ctrl_iface_notify_disconnect(union wifi_notifier_val val)
+{
+	int reason = val.val_char;
+	BTD("%s ,reason = %d\n", __func__,reason);
+	char data[2] = {0};
+	u8_t res_result = RESULT_SUCCESS;
+
+	data[0] = RESULT_DISCONNECT;
+	data[1] = res_result;
+
+	if (1 == wait_disconnect_done) {
+		disconnect_result = 0;
+		k_sem_give(&disconnect_sem);
+	} else {
+		wifi_manager_notify(data, sizeof(data));
+	}
+}
+
+static void wifimgr_ctrl_iface_notify_station(int status, char *mac)
+{
+	BTD("%s\n", __func__);
+
+	u8_t res_result = RESULT_SUCCESS;
+	char data[20] = {0};
+	u8_t data_len = 0;
+
+	if (!mac) {
+		BTD("mac = NULL\n");
+		res_result = RESULT_FAIL;
+		data_len = 2;
+		goto error;
+	}
+
+	BTD("status : %d, mac : %02x:%02x:%02x:%02x:%02x:%02x\n", status, mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+
+	data[2] = status;
+	memcpy(&data[3], mac, BSSID_LEN);
+	res_result = RESULT_SUCCESS;
+	data_len = 9;
+
+error:
+	data[0] = RESULT_STATION_REPORT;
+	data[1] = res_result;
+
+	wifi_manager_notify(data, data_len);
+}
+
+static void wifimgr_ctrl_iface_notify_new_station(union wifi_notifier_val val)
+{
+	BTD("%s\n", __func__);
+
+	int status = 0x01;
+	char *mac = (char *)(val.val_ptr);
+	wifimgr_ctrl_iface_notify_station(status, mac);
+}
+
+static void wifimgr_ctrl_iface_notify_station_leave(union wifi_notifier_val val)
+{
+	BTD("%s\n", __func__);
+
+	int status = 0x00;
+	char *mac = (char *)(val.val_ptr);
+	wifimgr_ctrl_iface_notify_station(status, mac);
+}
+
 static void wifimgr_ctrl_iface_notify_scan_res(wifi_scan_res_type *scan_res)
 {
 	BTD("%s\n", __func__);
@@ -106,6 +193,7 @@ static void wifimgr_ctrl_iface_notify_scan_res(wifi_scan_res_type *scan_res)
 		data[1] = res_result;
 
 		BTD("%s ,len error\n", __func__);
+		BTD("%s  enter wifi_manager_notify", __func__);
 		wifi_manager_notify(data, 2);
 		return;
 	}
@@ -131,36 +219,9 @@ static void wifimgr_ctrl_iface_notify_scan_res(wifi_scan_res_type *scan_res)
 
 	UINT8_TO_STREAM(p, scan_res->security);
 
+	BTD("%s  enter wifi_manager_notify", __func__);
 	wifi_manager_notify(data, data_len + 4);
 }
-
-/* static void wifimgr_ctrl_iface_notify_new_station(char status, char *mac)
-{
-	BTD("%s\n", __func__);
-	u8_t res_result = RESULT_SUCCESS;
-	char data[20] = {0};
-	u8_t data_len = 0;
-
-	if (!mac) {
-		BTD("mac = NULL\n");
-		res_result = RESULT_FAIL;
-		data_len = 2;
-		goto error;
-	}
-
-	BTD("status : %d, mac : %02x:%02x:%02x:%02x:%02x:%02x\n", status, mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
-
-	data[2] = status;
-	memcpy(&data[3], mac, BSSID_LEN);
-	res_result = RESULT_SUCCESS;
-	data_len = 9;
-
-error:
-	data[0] = RESULT_STATION_REPORT;
-	data[1] = res_result;
-
-	wifi_manager_notify(data, data_len);
-} */
 
 static void wifimgr_ccc_cfg_changed(const struct bt_gatt_attr *attr, u16_t value)
 {
@@ -387,12 +448,16 @@ void wifimgr_set_conf_and_connect(const void *buf)
 	if (RESULT_SUCCESS != wifimgr_do_connect()) {
 		BTD("%s, connect fail\n", __func__);
 		res_result = RESULT_FAIL;
+	} else {
+		BTD("%s, connect success\n", __func__);
+		return;
 	}
 
 error:
 	data[0] = RESULT_SET_CONF_AND_CONNECT;
 	data[1] = res_result;
 
+	BTD("%s  enter wifi_manager_notify", __func__);
 	wifi_manager_notify(data, sizeof(data));
 }
 
@@ -409,38 +474,7 @@ void wifimgr_set_conf_and_interval(const void *buf)
 	data[0] = RESULT_SET_CONF_AND_INTERVAL;
 	data[1] = res_result;
 
-	wifi_manager_notify(data, sizeof(data));
-}
-
-void wifimgr_ctrl_iface_notify_connect(char result)
-{
-	BTD("%s ,result = %d\n", __func__, result);
-	char data[2] = {0};
-	u8_t res_result = RESULT_SUCCESS;
-
-	if (0 == result) {
-		BTD("%s, connect succesfully\n", __func__);
-		res_result = RESULT_SUCCESS;
-	} else {
-		BTD("%s, connect failed\n", __func__);
-		res_result = RESULT_FAIL;
-	}
-
-	data[0] = RESULT_SET_CONF_AND_CONNECT;
-	data[1] = res_result;
-
-	wifi_manager_notify(data, sizeof(data));
-}
-
-void wifimgr_ctrl_iface_notify_connect_timeout(void)
-{
-	BTD("%s\n", __func__);
-	char data[2] = {0};
-	u8_t res_result = RESULT_FAIL;
-
-	data[0] = RESULT_SET_CONF_AND_CONNECT;
-	data[1] = res_result;
-
+	BTD("%s  enter wifi_manager_notify", __func__);
 	wifi_manager_notify(data, sizeof(data));
 }
 
@@ -492,6 +526,7 @@ static void wifimgr_ctrl_iface_get_sta_conf(void)
 		data[1] = res_result;
 
 		BTD("%s ,len error\n", __func__);
+		BTD("%s  enter wifi_manager_notify", __func__);
 		wifi_manager_notify(data, 2);
 		return;
 	}
@@ -525,6 +560,7 @@ static void wifimgr_ctrl_iface_get_sta_conf(void)
 	UINT8_TO_STREAM(p, wifimgr_sta_conf.wifi_conf.security);
 	UINT32_TO_STREAM(p, wifimgr_sta_conf.wifi_conf.autorun);
 
+	BTD("%s  enter wifi_manager_notify", __func__);
 	wifi_manager_notify(data, data_len + 4);
 }
 
@@ -563,6 +599,7 @@ static void wifimgr_ctrl_iface_get_ap_conf(void)
 		data[1] = res_result;
 
 		BTD("%s ,len error\n", __func__);
+		BTD("%s  enter wifi_manager_notify", __func__);
 		wifi_manager_notify(data, 2);
 		return;
 	}
@@ -591,6 +628,7 @@ static void wifimgr_ctrl_iface_get_ap_conf(void)
 	UINT8_TO_STREAM(p, wifimgr_ap_conf.wifi_conf.security);
 	UINT32_TO_STREAM(p, wifimgr_ap_conf.wifi_conf.autorun);
 
+	BTD("%s  enter wifi_manager_notify", __func__);
 	wifi_manager_notify(data, data_len + 4);
 }
 
@@ -607,7 +645,6 @@ void wifimgr_get_conf(enum wifimgr_iface_type wifi_iface_type, const void *buf)
 		ret = wifi_sta_get_conf(&(wifimgr_sta_conf.wifi_conf));
 		if (0 != ret) {
 			BTE("%s, wifi_sta_get_conf fail,err = %d\n", __func__, ret);
-			res_result = RESULT_FAIL;
 			goto err;
 		}
 
@@ -618,7 +655,6 @@ void wifimgr_get_conf(enum wifimgr_iface_type wifi_iface_type, const void *buf)
 		ret = wifi_ap_get_conf(&(wifimgr_ap_conf.wifi_conf));
 		if (0 != ret) {
 			BTE("%s, wifi_ap_get_conf fail,err = %d\n", __func__, ret);
-			res_result = RESULT_FAIL;
 			goto err;
 		}
 
@@ -628,9 +664,18 @@ void wifimgr_get_conf(enum wifimgr_iface_type wifi_iface_type, const void *buf)
 	}
 
 err:
+	if (0 != ret) {
+		BTD("%s, get_conf fail,ret = %d\n", __func__,ret);
+		res_result = RESULT_FAIL;
+	} else {
+		BTD("%s, get_conf success,ret = %d\n", __func__,ret);
+		return;
+	}
+	
 	data[0] = RESULT_GET_CONF;
 	data[1] = res_result;
 
+	BTD("%s  enter wifi_manager_notify", __func__);
 	wifi_manager_notify(data, sizeof(data));
 }
 
@@ -698,6 +743,7 @@ error:
 	data[0] = RESULT_GET_STATUS;
 	data[1] = res_result;
 
+	BTD("%s  enter wifi_manager_notify", __func__);
 	wifi_manager_notify(data, data_len);
 }
 
@@ -718,6 +764,7 @@ void wifimgr_open(const void *buf)
 	data[0] = RESULT_OPEN;
 	data[1] = res_result;
 
+	BTD("%s  enter wifi_manager_notify", __func__);
 	wifi_manager_notify(data, sizeof(data));
 }
 
@@ -738,6 +785,7 @@ void wifimgr_close(const void *buf)
 	data[0] = RESULT_CLOSE;
 	data[1] = res_result;
 
+	BTD("%s  enter wifi_manager_notify", __func__);
 	wifi_manager_notify(data, sizeof(data));
 }
 
@@ -756,6 +804,7 @@ void wifimgr_scan(const void *buf)
 	data[0] = RESULT_SCAN_DONE;
 	data[1] = res_result;
 
+	BTD("%s  enter wifi_manager_notify", __func__);
 	wifi_manager_notify(data, sizeof(data));
 }
 
@@ -818,13 +867,13 @@ void wifimgr_start_ap(const void *buf)
 	if (0 != ret) {
 		BTD("%s, start_ap fail,error = %d\n", __func__,ret);
 		res_result = RESULT_FAIL;
-		goto error;
 	}
 
 error:
 	data[0] = RESULT_START_AP;
 	data[1] = res_result;
 
+	BTD("%s  enter wifi_manager_notify", __func__);
 	wifi_manager_notify(data, sizeof(data));
 }
 
@@ -851,6 +900,7 @@ error:
 	data[0] = RESULT_STOP_AP;
 	data[1] = res_result;
 
+	BTD("%s  enter wifi_manager_notify", __func__);
 	wifi_manager_notify(data, sizeof(data));
 }
 
@@ -929,6 +979,7 @@ error:
 	data[0] = RESULT_MAC_ACL_REPORT;
 	data[1] = res_result;
 
+	BTD("%s  enter wifi_manager_notify", __func__);
 	wifi_manager_notify(data, data_len);
 }
 
@@ -977,7 +1028,6 @@ int wifimgr_do_disconnect(u8_t flags)
 
 	if (0 != ret) {
 		BTD("%s, disconnect fail-1,err = %d\n", __func__,ret);
-		goto error;
 	} else {
 		if (1 == flags) {
 			wait_disconnect_done = 1;
@@ -989,10 +1039,10 @@ int wifimgr_do_disconnect(u8_t flags)
 				ret = 0;
 			}
 			wait_disconnect_done = 0;
+			disconnect_result = -1;
 		} else {
 			ret = 0;
 		}
-		goto error;
 	}
 error:
 	return ret;
@@ -1077,47 +1127,15 @@ void wifimgr_disconnect(const void *buf)
 		BTD("%s, disconnect fail\n", __func__);
 		res_result = RESULT_FAIL;
 	} else {
+		BTD("%s, disconnect success\n", __func__);
 		return;
 	}
 
 	data[0] = RESULT_DISCONNECT;
 	data[1] = res_result;
 
+	BTD("%s  enter wifi_manager_notify", __func__);
 	wifi_manager_notify(data, sizeof(data));
-}
-
-void wifimgr_ctrl_iface_notify_disconnect(char reason)
-{
-	BTD("%s ,reason = %d\n", __func__,reason);
-	char data[2] = {0};
-	u8_t res_result = RESULT_SUCCESS;
-
-	data[0] = RESULT_DISCONNECT;
-	data[1] = res_result;
-
-	if (1 == wait_disconnect_done) {
-		disconnect_result = 0;
-		k_sem_give(&disconnect_sem);
-	} else {
-		wifi_manager_notify(data, sizeof(data));
-	}
-}
-
-void wifimgr_ctrl_iface_notify_disconnect_timeout(void)
-{
-	BTD("%s \n", __func__);
-	char data[2] = {0};
-	u8_t res_result = RESULT_FAIL;
-
-	data[0] = RESULT_DISCONNECT;
-	data[1] = res_result;
-
-	if (1 == wait_disconnect_done) {
-		disconnect_result = -1;
-		k_sem_give(&disconnect_sem);
-	} else {
-		wifi_manager_notify(data, sizeof(data));
-	}
 }
 
 static ssize_t wifi_manager_write(struct bt_conn *conn, const struct bt_gatt_attr *attr,
@@ -1225,8 +1243,16 @@ void wifi_manager_notify(const void *data, u16_t len)
 
 void wifi_manager_service_init(void)
 {
-	BTD("%s\n", __func__);
+	BTD("%s bt service register\n ", __func__);
 	bt_gatt_service_register(&wifi_manager_svc);
+
+	BTD("%s wifi service register\n ", __func__);
+	wifi_register_connection_notifier(wifimgr_ctrl_iface_notify_connect);
+	wifi_register_disconnection_notifier(wifimgr_ctrl_iface_notify_disconnect);
+
+	wifi_register_new_station_notifier(wifimgr_ctrl_iface_notify_new_station);
+	wifi_register_station_leave_notifier(wifimgr_ctrl_iface_notify_station_leave);
+
 	k_sem_init(&get_status_sem, 0, 1);
 	k_sem_init(&disconnect_sem, 0, 1);
 }
